@@ -1,0 +1,15 @@
+{
+  "name": "ICBF 2026 Schedule Planner",
+  "short_name": "ICBF 2026",
+  "description": "Build your personal ICBF 2026 conference schedule.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f7fa",
+  "theme_color": "#0e7c86",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
