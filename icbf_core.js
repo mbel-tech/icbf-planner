@@ -51,6 +51,74 @@
     });
   }
 
+  // ---------- name suggestions (typeahead + "did you mean") ----------
+  var PRESENTER_NAMES = (function () {
+    var seen = {}, list = [];
+    DATA.forEach(function (e) {
+      if (!isTalk(e) || !e.presenter) return;
+      var name = e.presenter.trim();
+      if (name && !seen[name]) { seen[name] = 1; list.push(name); }
+    });
+    list.sort(function (a, b) { return a.localeCompare(b); });
+    return list;
+  })();
+
+  function levenshtein(a, b) {
+    a = a || ""; b = b || "";
+    var m = a.length, n = b.length;
+    if (!m) return n;
+    if (!n) return m;
+    var prev = new Array(n + 1), cur = new Array(n + 1);
+    for (var j = 0; j <= n; j++) prev[j] = j;
+    for (var i = 1; i <= m; i++) {
+      cur[0] = i;
+      for (var j2 = 1; j2 <= n; j2++) {
+        var cost = a.charAt(i - 1) === b.charAt(j2 - 1) ? 0 : 1;
+        cur[j2] = Math.min(prev[j2] + 1, cur[j2 - 1] + 1, prev[j2 - 1] + cost);
+      }
+      var tmp = prev; prev = cur; cur = tmp;
+    }
+    return prev[n];
+  }
+
+  // Live typeahead while the user is still typing: cheap prefix/substring match,
+  // no fuzziness (the query is incomplete, so edit-distance isn't meaningful yet).
+  function suggestNames(prefix, limit) {
+    limit = limit || 6;
+    var q = normName(prefix).trim();
+    if (q.length < 2) return [];
+    var starts = [], contains = [];
+    PRESENTER_NAMES.forEach(function (name) {
+      var n = normName(name);
+      if (n.indexOf(q) === 0) starts.push(name);
+      else if (n.indexOf(q) >= 0) contains.push(name);
+    });
+    return starts.concat(contains).slice(0, limit);
+  }
+
+  // "Did you mean...": only called after a completed search returns zero results,
+  // so here the query IS presumably a full (if misspelled) name attempt -- compare
+  // by edit distance against a few candidate strings per name, since presenter
+  // strings aren't uniformly "Lastname, First" (a few plenary rows are stored as
+  // "First Last, Org"), so the surname could be either word before the comma.
+  function didYouMean(query, limit) {
+    limit = limit || 3;
+    var q = normName(query).trim();
+    if (!q) return [];
+    var maxD = Math.max(1, Math.ceil(Math.max(q.length, 3) * 0.4));
+    var scored = PRESENTER_NAMES.map(function (name) {
+      var seg = normName((name.split(",")[0] || name).trim());
+      var words = seg.split(/\s+/);
+      var lastWord = words[words.length - 1] || seg;
+      var d = Math.min(levenshtein(q, normName(name)), levenshtein(q, seg), levenshtein(q, lastWord));
+      return { name: name, d: d };
+    }).filter(function (s) { return s.d > 0 && s.d <= maxD; });
+    scored.sort(function (a, b) { return a.d - b.d; });
+    var out = [], seen = {};
+    scored.forEach(function (s) { if (out.length < limit && !seen[s.name]) { seen[s.name] = 1; out.push(s.name); } });
+    return out;
+  }
+
   function daySlots(day) {
     var es = DATA.filter(function (e) { return e.day === day; });
     var times = [];
@@ -350,7 +418,7 @@
     dayAgenda: dayAgenda, sessColor: sessColor, findMatches: findMatches, byId: byId, key: key,
     pick: pick, currentSlot: currentSlot, countChoices: countChoices, hasPicks: hasPicks,
     choiceIndexForKey: choiceIndexForKey, renderPrintArea: renderPrintArea, FIXLBL: FIXLBL,
-    isFollowedTalk: isFollowedTalk,
+    isFollowedTalk: isFollowedTalk, suggestNames: suggestNames, didYouMean: didYouMean,
     // actions
     toggleKeep: toggleKeep, toggleStar: toggleStar, skipSlot: skipSlot,
     next: next, back: back, goStart: goStart, goPlay: goPlay, goReview: goReview, startOver: startOver,

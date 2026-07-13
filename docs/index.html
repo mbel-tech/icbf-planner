@@ -43,6 +43,16 @@ button:hover{filter:brightness(.97)}
 .chip button:hover{background:#dadffa}
 .searchrow{display:flex;gap:10px;margin:4px 0}
 .nameinput{flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:9px;font-size:14px;font:inherit}
+.ac-wrap{position:relative;flex:1}
+.ac-wrap .nameinput{width:100%}
+.ac-dropdown{display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:#fff;border:1px solid var(--line);
+  border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.14);z-index:8;max-height:240px;overflow:auto}
+.ac-item{padding:9px 13px;font-size:13.5px;cursor:pointer}
+.ac-item:hover{background:#f0fafb}
+.dym-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.dym-label{font-size:12.5px;color:var(--muted);font-weight:600}
+.dym-chip{background:#fff3cd;color:#8a6d00;border:1px solid #f3e3ab;border-radius:99px;padding:6px 13px;font-size:12.5px;font-weight:600}
+.dym-chip:hover{background:#fbe7a1}
 .searchresults{margin-top:12px;display:flex;flex-direction:column;gap:10px}
 .matchlist{display:flex;flex-direction:column;gap:8px}
 .matchrow{display:flex;gap:10px;align-items:flex-start;background:#f7fafb;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:13px;cursor:pointer}
@@ -165,6 +175,15 @@ button{font:inherit;cursor:pointer;border:0;border-radius:12px;background:#eef2f
 .m-choice-btn{display:block;width:100%;border:2px solid var(--line);background:#fff;padding:15px;font-weight:600;border-radius:14px;margin-bottom:10px;text-align:left;min-height:52px}
 .m-choice-btn:active{border-color:var(--teal)}
 .m-nameinput{display:block;width:100%;padding:14px;border:1px solid var(--line);border-radius:12px;font:inherit;font-size:16px;margin-bottom:10px}
+.m-ac-wrap{position:relative}
+.m-ac-dropdown{display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:#fff;border:1px solid var(--line);
+  border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.16);z-index:12;max-height:260px;overflow:auto}
+.m-ac-item{padding:13px 15px;font-size:14.5px;cursor:pointer}
+.m-ac-item:active{background:#f0fafb}
+.m-dym-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px;margin-bottom:10px}
+.m-dym-label{font-size:13px;color:var(--muted);font-weight:600}
+.m-dym-chip{background:#fff3cd;color:#8a6d00;border:1px solid #f3e3ab;border-radius:99px;padding:8px 14px;font-size:13px;font-weight:600;min-height:0}
+.m-dym-chip:active{background:#fbe7a1}
 .m-results{margin-top:12px}
 .m-matchrow{display:flex;gap:12px;align-items:flex-start;background:#f7fafb;border:1px solid var(--line);border-radius:12px;padding:13px;font-size:14px;margin-bottom:10px}
 .m-matchrow input{width:22px;height:22px;margin-top:2px;flex:0 0 auto}
@@ -6250,6 +6269,74 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     });
   }
 
+  // ---------- name suggestions (typeahead + "did you mean") ----------
+  var PRESENTER_NAMES = (function () {
+    var seen = {}, list = [];
+    DATA.forEach(function (e) {
+      if (!isTalk(e) || !e.presenter) return;
+      var name = e.presenter.trim();
+      if (name && !seen[name]) { seen[name] = 1; list.push(name); }
+    });
+    list.sort(function (a, b) { return a.localeCompare(b); });
+    return list;
+  })();
+
+  function levenshtein(a, b) {
+    a = a || ""; b = b || "";
+    var m = a.length, n = b.length;
+    if (!m) return n;
+    if (!n) return m;
+    var prev = new Array(n + 1), cur = new Array(n + 1);
+    for (var j = 0; j <= n; j++) prev[j] = j;
+    for (var i = 1; i <= m; i++) {
+      cur[0] = i;
+      for (var j2 = 1; j2 <= n; j2++) {
+        var cost = a.charAt(i - 1) === b.charAt(j2 - 1) ? 0 : 1;
+        cur[j2] = Math.min(prev[j2] + 1, cur[j2 - 1] + 1, prev[j2 - 1] + cost);
+      }
+      var tmp = prev; prev = cur; cur = tmp;
+    }
+    return prev[n];
+  }
+
+  // Live typeahead while the user is still typing: cheap prefix/substring match,
+  // no fuzziness (the query is incomplete, so edit-distance isn't meaningful yet).
+  function suggestNames(prefix, limit) {
+    limit = limit || 6;
+    var q = normName(prefix).trim();
+    if (q.length < 2) return [];
+    var starts = [], contains = [];
+    PRESENTER_NAMES.forEach(function (name) {
+      var n = normName(name);
+      if (n.indexOf(q) === 0) starts.push(name);
+      else if (n.indexOf(q) >= 0) contains.push(name);
+    });
+    return starts.concat(contains).slice(0, limit);
+  }
+
+  // "Did you mean...": only called after a completed search returns zero results,
+  // so here the query IS presumably a full (if misspelled) name attempt -- compare
+  // by edit distance against a few candidate strings per name, since presenter
+  // strings aren't uniformly "Lastname, First" (a few plenary rows are stored as
+  // "First Last, Org"), so the surname could be either word before the comma.
+  function didYouMean(query, limit) {
+    limit = limit || 3;
+    var q = normName(query).trim();
+    if (!q) return [];
+    var maxD = Math.max(1, Math.ceil(Math.max(q.length, 3) * 0.4));
+    var scored = PRESENTER_NAMES.map(function (name) {
+      var seg = normName((name.split(",")[0] || name).trim());
+      var words = seg.split(/\s+/);
+      var lastWord = words[words.length - 1] || seg;
+      var d = Math.min(levenshtein(q, normName(name)), levenshtein(q, seg), levenshtein(q, lastWord));
+      return { name: name, d: d };
+    }).filter(function (s) { return s.d > 0 && s.d <= maxD; });
+    scored.sort(function (a, b) { return a.d - b.d; });
+    var out = [], seen = {};
+    scored.forEach(function (s) { if (out.length < limit && !seen[s.name]) { seen[s.name] = 1; out.push(s.name); } });
+    return out;
+  }
+
   function daySlots(day) {
     var es = DATA.filter(function (e) { return e.day === day; });
     var times = [];
@@ -6549,7 +6636,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     dayAgenda: dayAgenda, sessColor: sessColor, findMatches: findMatches, byId: byId, key: key,
     pick: pick, currentSlot: currentSlot, countChoices: countChoices, hasPicks: hasPicks,
     choiceIndexForKey: choiceIndexForKey, renderPrintArea: renderPrintArea, FIXLBL: FIXLBL,
-    isFollowedTalk: isFollowedTalk,
+    isFollowedTalk: isFollowedTalk, suggestNames: suggestNames, didYouMean: didYouMean,
     // actions
     toggleKeep: toggleKeep, toggleStar: toggleStar, skipSlot: skipSlot,
     next: next, back: back, goStart: goStart, goPlay: goPlay, goReview: goReview, startOver: startOver,
@@ -6571,6 +6658,45 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 
   function el(html) { var d = document.createElement("div"); d.innerHTML = html; return d.firstElementChild; }
   var esc = C.esc;
+
+  // Wraps `input` with a live-suggestions dropdown (search-as-you-type) fed by
+  // C.suggestNames. Selecting a suggestion fills the input and runs onPick(name).
+  function attachAutocomplete(input, onPick) {
+    var wrap = el('<div class="ac-wrap"></div>');
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    var dd = el('<div class="ac-dropdown"></div>');
+    wrap.appendChild(dd);
+    function hide() { dd.innerHTML = ""; dd.style.display = "none"; }
+    function show() {
+      var names = C.suggestNames(input.value);
+      dd.innerHTML = "";
+      if (!names.length) { hide(); return; }
+      names.forEach(function (name) {
+        var item = el('<div class="ac-item">' + esc(name) + '</div>');
+        item.onclick = function () { input.value = name; hide(); onPick(name); };
+        dd.appendChild(item);
+      });
+      dd.style.display = "block";
+    }
+    input.addEventListener("input", show);
+    input.addEventListener("focus", show);
+    input.addEventListener("blur", function () { setTimeout(hide, 150); });
+    return wrap;
+  }
+
+  // Rendered under a zero-result search: fuzzy "did you mean" name chips.
+  function didYouMeanRow(query, onPick) {
+    var names = C.didYouMean(query);
+    if (!names.length) return null;
+    var row = el('<div class="dym-row"><span class="dym-label">Did you mean:</span></div>');
+    names.forEach(function (name) {
+      var chip = el('<button class="dym-chip">' + esc(name) + '</button>');
+      chip.onclick = function () { onPick(name); };
+      row.appendChild(chip);
+    });
+    return row;
+  }
 
   function render() {
     var s = C.state.screen;
@@ -6658,8 +6784,9 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     var resultsBox = el('<div class="searchresults"></div>');
     wrap.appendChild(resultsBox);
 
-    function runSearch() {
-      var q = input.value.trim();
+    function runSearch(overrideName) {
+      var q = (overrideName != null ? overrideName : input.value).trim();
+      input.value = q;
       C.setMyName(q);
       resultsBox.innerHTML = "";
       if (!q) return;
@@ -6667,6 +6794,8 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       if (!matches.length) {
         resultsBox.appendChild(el('<p class="muted">No talks found matching “' + esc(q)
           + '”. Check the spelling, or try just your surname.</p>'));
+        var dym = didYouMeanRow(q, runSearch);
+        if (dym) resultsBox.appendChild(dym);
         return;
       }
       resultsBox.appendChild(el('<p class="muted">Found ' + matches.length + ' match'
@@ -6688,7 +6817,8 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       skip.onclick = function () { C.confirmMyTalks([]); };
       resultsBox.appendChild(skip);
     }
-    btn.onclick = runSearch;
+    btn.onclick = function () { runSearch(); };
+    attachAutocomplete(input, runSearch);
     input.addEventListener("keydown", function (e) { if (e.key === "Enter") runSearch(); });
     if (st.myName) runSearch();
     return wrap;
@@ -6721,13 +6851,16 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     var resultsBox = el('<div class="searchresults"></div>');
     wrap.appendChild(resultsBox);
 
-    function runSearch() {
-      var q = input.value.trim();
+    function runSearch(overrideName) {
+      var q = (overrideName != null ? overrideName : input.value).trim();
+      input.value = q;
       resultsBox.innerHTML = "";
       if (!q) return;
       var matches = C.findMatches(q);
       if (!matches.length) {
         resultsBox.appendChild(el('<p class="muted">No talks found for “' + esc(q) + '”.</p>'));
+        var dym = didYouMeanRow(q, runSearch);
+        if (dym) resultsBox.appendChild(dym);
         return;
       }
       resultsBox.appendChild(el('<p class="muted">Found ' + matches.length + ' match'
@@ -6756,7 +6889,8 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       };
       resultsBox.appendChild(confirm);
     }
-    btn.onclick = runSearch;
+    btn.onclick = function () { runSearch(); };
+    attachAutocomplete(input, runSearch);
     input.addEventListener("keydown", function (e) { if (e.key === "Enter") runSearch(); });
     return wrap;
   }
@@ -6945,6 +7079,45 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   function el(html) { var d = document.createElement("div"); d.innerHTML = html; return d.firstElementChild; }
   var esc = C.esc;
 
+  // Wraps `input` with a live-suggestions dropdown (search-as-you-type) fed by
+  // C.suggestNames. Selecting a suggestion fills the input and runs onPick(name).
+  function attachAutocomplete(input, onPick) {
+    var wrap = el('<div class="m-ac-wrap"></div>');
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    var dd = el('<div class="m-ac-dropdown"></div>');
+    wrap.appendChild(dd);
+    function hide() { dd.innerHTML = ""; dd.style.display = "none"; }
+    function show() {
+      var names = C.suggestNames(input.value);
+      dd.innerHTML = "";
+      if (!names.length) { hide(); return; }
+      names.forEach(function (name) {
+        var item = el('<div class="m-ac-item">' + esc(name) + '</div>');
+        item.onclick = function () { input.value = name; hide(); onPick(name); };
+        dd.appendChild(item);
+      });
+      dd.style.display = "block";
+    }
+    input.addEventListener("input", show);
+    input.addEventListener("focus", show);
+    input.addEventListener("blur", function () { setTimeout(hide, 150); });
+    return wrap;
+  }
+
+  // Rendered under a zero-result search: fuzzy "did you mean" name chips.
+  function didYouMeanRow(query, onPick) {
+    var names = C.didYouMean(query);
+    if (!names.length) return null;
+    var row = el('<div class="m-dym-row"><span class="m-dym-label">Did you mean:</span></div>');
+    names.forEach(function (name) {
+      var chip = el('<button class="m-dym-chip">' + esc(name) + '</button>');
+      chip.onclick = function () { onPick(name); };
+      row.appendChild(chip);
+    });
+    return row;
+  }
+
   function render() {
     var s = C.state.screen;
     if (s === "start") return renderStart();
@@ -7026,14 +7199,17 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     var resultsBox = el('<div class="m-results"></div>');
     wrap.appendChild(resultsBox);
 
-    function runSearch() {
-      var q = input.value.trim();
+    function runSearch(overrideName) {
+      var q = (overrideName != null ? overrideName : input.value).trim();
+      input.value = q;
       C.setMyName(q);
       resultsBox.innerHTML = "";
       if (!q) return;
       var matches = C.findMatches(q);
       if (!matches.length) {
         resultsBox.appendChild(el('<p class="m-muted">No talks found for “' + esc(q) + '”. Try just your surname.</p>'));
+        var dym = didYouMeanRow(q, runSearch);
+        if (dym) resultsBox.appendChild(dym);
         return;
       }
       resultsBox.appendChild(el('<p class="m-muted">Found ' + matches.length + ' — untick any that aren’t yours:</p>'));
@@ -7052,7 +7228,8 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       skip.onclick = function () { C.confirmMyTalks([]); };
       resultsBox.appendChild(skip);
     }
-    btn.onclick = runSearch;
+    btn.onclick = function () { runSearch(); };
+    attachAutocomplete(input, runSearch);
     input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); runSearch(); } });
     if (st.myName) runSearch();
     return wrap;
@@ -7083,13 +7260,16 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     var resultsBox = el('<div class="m-results"></div>');
     wrap.appendChild(resultsBox);
 
-    function runSearch() {
-      var q = input.value.trim();
+    function runSearch(overrideName) {
+      var q = (overrideName != null ? overrideName : input.value).trim();
+      input.value = q;
       resultsBox.innerHTML = "";
       if (!q) return;
       var matches = C.findMatches(q);
       if (!matches.length) {
         resultsBox.appendChild(el('<p class="m-muted">No talks found for “' + esc(q) + '”.</p>'));
+        var dym = didYouMeanRow(q, runSearch);
+        if (dym) resultsBox.appendChild(dym);
         return;
       }
       resultsBox.appendChild(el('<p class="m-muted">Found ' + matches.length + ' — untick any that aren’t them:</p>'));
@@ -7115,7 +7295,8 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       };
       resultsBox.appendChild(confirm);
     }
-    btn.onclick = runSearch;
+    btn.onclick = function () { runSearch(); };
+    attachAutocomplete(input, runSearch);
     input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); runSearch(); } });
     return wrap;
   }

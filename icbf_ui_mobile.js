@@ -8,6 +8,45 @@
   function el(html) { var d = document.createElement("div"); d.innerHTML = html; return d.firstElementChild; }
   var esc = C.esc;
 
+  // Wraps `input` with a live-suggestions dropdown (search-as-you-type) fed by
+  // C.suggestNames. Selecting a suggestion fills the input and runs onPick(name).
+  function attachAutocomplete(input, onPick) {
+    var wrap = el('<div class="m-ac-wrap"></div>');
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    var dd = el('<div class="m-ac-dropdown"></div>');
+    wrap.appendChild(dd);
+    function hide() { dd.innerHTML = ""; dd.style.display = "none"; }
+    function show() {
+      var names = C.suggestNames(input.value);
+      dd.innerHTML = "";
+      if (!names.length) { hide(); return; }
+      names.forEach(function (name) {
+        var item = el('<div class="m-ac-item">' + esc(name) + '</div>');
+        item.onclick = function () { input.value = name; hide(); onPick(name); };
+        dd.appendChild(item);
+      });
+      dd.style.display = "block";
+    }
+    input.addEventListener("input", show);
+    input.addEventListener("focus", show);
+    input.addEventListener("blur", function () { setTimeout(hide, 150); });
+    return wrap;
+  }
+
+  // Rendered under a zero-result search: fuzzy "did you mean" name chips.
+  function didYouMeanRow(query, onPick) {
+    var names = C.didYouMean(query);
+    if (!names.length) return null;
+    var row = el('<div class="m-dym-row"><span class="m-dym-label">Did you mean:</span></div>');
+    names.forEach(function (name) {
+      var chip = el('<button class="m-dym-chip">' + esc(name) + '</button>');
+      chip.onclick = function () { onPick(name); };
+      row.appendChild(chip);
+    });
+    return row;
+  }
+
   function render() {
     var s = C.state.screen;
     if (s === "start") return renderStart();
@@ -89,14 +128,17 @@
     var resultsBox = el('<div class="m-results"></div>');
     wrap.appendChild(resultsBox);
 
-    function runSearch() {
-      var q = input.value.trim();
+    function runSearch(overrideName) {
+      var q = (overrideName != null ? overrideName : input.value).trim();
+      input.value = q;
       C.setMyName(q);
       resultsBox.innerHTML = "";
       if (!q) return;
       var matches = C.findMatches(q);
       if (!matches.length) {
         resultsBox.appendChild(el('<p class="m-muted">No talks found for “' + esc(q) + '”. Try just your surname.</p>'));
+        var dym = didYouMeanRow(q, runSearch);
+        if (dym) resultsBox.appendChild(dym);
         return;
       }
       resultsBox.appendChild(el('<p class="m-muted">Found ' + matches.length + ' — untick any that aren’t yours:</p>'));
@@ -115,7 +157,8 @@
       skip.onclick = function () { C.confirmMyTalks([]); };
       resultsBox.appendChild(skip);
     }
-    btn.onclick = runSearch;
+    btn.onclick = function () { runSearch(); };
+    attachAutocomplete(input, runSearch);
     input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); runSearch(); } });
     if (st.myName) runSearch();
     return wrap;
@@ -146,13 +189,16 @@
     var resultsBox = el('<div class="m-results"></div>');
     wrap.appendChild(resultsBox);
 
-    function runSearch() {
-      var q = input.value.trim();
+    function runSearch(overrideName) {
+      var q = (overrideName != null ? overrideName : input.value).trim();
+      input.value = q;
       resultsBox.innerHTML = "";
       if (!q) return;
       var matches = C.findMatches(q);
       if (!matches.length) {
         resultsBox.appendChild(el('<p class="m-muted">No talks found for “' + esc(q) + '”.</p>'));
+        var dym = didYouMeanRow(q, runSearch);
+        if (dym) resultsBox.appendChild(dym);
         return;
       }
       resultsBox.appendChild(el('<p class="m-muted">Found ' + matches.length + ' — untick any that aren’t them:</p>'));
@@ -178,7 +224,8 @@
       };
       resultsBox.appendChild(confirm);
     }
-    btn.onclick = runSearch;
+    btn.onclick = function () { runSearch(); };
+    attachAutocomplete(input, runSearch);
     input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); runSearch(); } });
     return wrap;
   }
