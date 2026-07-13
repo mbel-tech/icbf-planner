@@ -31,7 +31,7 @@ jspdf = jspdf_path.read_text(encoding="utf-8", errors="replace")
 CSS_DESKTOP = r"""
 :root{
   --ink:#12232e; --muted:#607080; --line:#e2e8ef; --bg:#f4f7fa; --card:#ffffff;
-  --teal:#0e7c86; --teal2:#0b6169; --gold:#e0a800; --own:#8e44ad; --shadow:0 2px 10px rgba(20,40,60,.08);
+  --teal:#0e7c86; --teal2:#0b6169; --gold:#e0a800; --own:#8e44ad; --follow:#4a5fc1; --shadow:0 2px 10px rgba(20,40,60,.08);
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
@@ -60,6 +60,12 @@ button:hover{filter:brightness(.97)}
 .link2{color:var(--teal);text-decoration:underline;cursor:pointer}
 .presenter-block p{margin:0}
 .presenter-summary p{font-size:14px}
+.chiprow{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#eef0fb;color:var(--follow);border:1px solid #dadffa;
+  border-radius:99px;padding:6px 6px 6px 12px;font-size:12.5px;font-weight:600}
+.chip i{font-weight:400;opacity:.8;font-style:normal}
+.chip button{background:none;padding:2px 6px;border-radius:99px;color:var(--follow);font-size:11px}
+.chip button:hover{background:#dadffa}
 .searchrow{display:flex;gap:10px;margin:4px 0}
 .nameinput{flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:9px;font-size:14px;font:inherit}
 .searchresults{margin-top:12px;display:flex;flex-direction:column;gap:10px}
@@ -92,6 +98,8 @@ button:hover{filter:brightness(.97)}
 .card.star{box-shadow:0 0 0 2px var(--gold) inset,var(--shadow)}
 .cardtop{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px}
 .room{font-size:12px;font-weight:700;color:#45586b}
+.tagrow{display:flex;gap:6px;align-items:center}
+.followtag{font-size:11px;background:#eef0fb;color:var(--follow);border-radius:99px;padding:2px 7px;font-weight:700}
 .tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;white-space:nowrap;text-transform:uppercase;letter-spacing:.03em}
 .card .title{font-size:14px;font-weight:600;line-height:1.35;margin-bottom:5px}
 .card .pres{font-size:12.5px;color:var(--muted);font-style:italic}
@@ -125,6 +133,13 @@ button:hover{filter:brightness(.97)}
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);opacity:0;pointer-events:none;
   background:#12232e;color:#fff;padding:11px 18px;border-radius:10px;font-size:13.5px;transition:.2s;z-index:50;box-shadow:0 6px 20px rgba(0,0,0,.25)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.modal-back{position:fixed;inset:0;z-index:40;background:rgba(10,20,30,0);transition:background .18s;
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.modal-back.show{background:rgba(10,20,30,.45)}
+.modal-panel{position:relative;background:#fff;border-radius:16px;max-width:560px;width:100%;max-height:82vh;overflow:auto;
+  padding:22px 24px 24px;box-shadow:0 20px 60px rgba(0,0,0,.3);transform:translateY(10px);opacity:0;transition:.18s}
+.modal-back.show .modal-panel{transform:translateY(0);opacity:1}
+.modal-close{position:absolute;top:14px;right:14px;background:#eef2f6;width:32px;height:32px;padding:0;border-radius:99px;font-size:14px}
 #printArea{display:none}
 @media print{
   #app,.toast{display:none!important}
@@ -141,7 +156,7 @@ button:hover{filter:brightness(.97)}
 CSS_MOBILE = r"""
 :root{
   --ink:#12232e; --muted:#5d6b7a; --line:#e2e8ef; --bg:#f4f7fa; --card:#fff;
-  --teal:#0e7c86; --teal2:#0b6169; --gold:#e0a800; --own:#8e44ad;
+  --teal:#0e7c86; --teal2:#0b6169; --gold:#e0a800; --own:#8e44ad; --follow:#4a5fc1;
   --shadow:0 2px 10px rgba(20,40,60,.08); --barh:calc(64px + env(safe-area-inset-bottom));
 }
 *{box-sizing:border-box}
@@ -181,13 +196,20 @@ button{font:inherit;cursor:pointer;border:0;border-radius:12px;background:#eef2f
 .m-matchrow{display:flex;gap:12px;align-items:flex-start;background:#f7fafb;border:1px solid var(--line);border-radius:12px;padding:13px;font-size:14px;margin-bottom:10px}
 .m-matchrow input{width:22px;height:22px;margin-top:2px;flex:0 0 auto}
 .m-matchrow i{color:var(--muted)}
+.m-chiprow{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 12px}
+.m-chip{display:inline-flex;align-items:center;gap:6px;background:#eef0fb;color:var(--follow);border:1px solid #dadffa;
+  border-radius:99px;padding:7px 7px 7px 13px;font-size:13px;font-weight:600}
+.m-chip i{font-weight:400;opacity:.8;font-style:normal}
+.m-chip button{background:none;padding:4px 8px;border-radius:99px;color:var(--follow);font-size:12px;min-height:0}
+.m-chip button:active{background:#dadffa}
 
 /* play */
 .m-top{position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 16px 8px;padding-top:calc(12px + env(safe-area-inset-top))}
 .m-progbar{height:7px;background:#e6ecf2;border-radius:99px;overflow:hidden}
 .m-progbar i{display:block;height:100%;background:linear-gradient(90deg,var(--teal),#3bb7c2);transition:.25s}
-.m-topmeta{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-top:6px}
+.m-topmeta{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);margin-top:6px;gap:8px}
 .m-daytag{font-weight:700;color:var(--teal2)}
+.m-followbtn{background:#eef0fb;color:var(--follow);font-weight:700;font-size:13px;padding:6px 12px;border-radius:99px;min-height:0}
 .m-scroll{padding:6px 16px var(--barh);min-height:calc(100vh - 120px)}
 .m-dayband{font-weight:800;font-size:16px;color:var(--teal2);margin:8px 0 4px}
 .m-when{font-size:20px;font-weight:800;margin:10px 2px 12px}
@@ -200,6 +222,8 @@ button{font:inherit;cursor:pointer;border:0;border-radius:12px;background:#eef2f
 .m-card.star{box-shadow:0 0 0 2.5px var(--gold) inset,var(--shadow)}
 .m-cardtop{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:7px}
 .m-room{font-size:13px;font-weight:700;color:#45586b}
+.m-tagrow{display:flex;gap:6px;align-items:center}
+.m-followtag{font-size:11px;background:#eef0fb;color:var(--follow);border-radius:99px;padding:3px 8px;font-weight:700}
 .m-tag{font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px;text-transform:uppercase;letter-spacing:.03em}
 .m-title{font-size:16px;font-weight:600;line-height:1.35;margin-bottom:6px}
 .m-pres{font-size:14px;color:var(--muted);font-style:italic}
@@ -244,7 +268,7 @@ button{font:inherit;cursor:pointer;border:0;border-radius:12px;background:#eef2f
 /* review */
 .m-rvtop{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;align-items:center;gap:12px;
   padding:12px 16px;padding-top:calc(12px + env(safe-area-inset-top))}
-.m-rvtop h2{margin:0;font-size:20px}
+.m-rvtop h2{margin:0;font-size:20px;flex:1}
 .m-rvbody{padding:4px 16px}
 .m-rvday h3{color:var(--teal2);border-bottom:2px solid var(--line);padding-bottom:6px;margin:18px 0 4px}
 

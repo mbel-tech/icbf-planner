@@ -18,7 +18,8 @@
 
   var state = {
     days: ALL_DAYS.slice(), picks: {}, step: 0, screen: "start",
-    presenterMode: null, myName: "", myTalkIds: [], uiSearching: false
+    presenterMode: null, myName: "", myTalkIds: [], uiSearching: false,
+    followed: []  // [{ id, name, talkIds: [...] }] -- speakers to auto-keep+star throughout
   };
   var STREAM = [], CHOICES = [];
   var subscriber = null;
@@ -30,6 +31,12 @@
   function isTalk(e) { return e.type === "talk" || e.type === "plenary"; }
   function isFixed(e) { return ["break", "lunch", "poster", "free"].indexOf(e.type) >= 0; }
   function isMine(e) { return state.myTalkIds.indexOf(e.id) >= 0; }
+  function isFollowedTalk(id) {
+    return state.followed.some(function (f) { return f.talkIds.indexOf(id) >= 0; });
+  }
+  function slotFor(entry) {
+    return daySlots(entry.day).filter(function (s) { return s.time === entry.time; })[0] || null;
+  }
 
   function normName(s) {
     return (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -117,7 +124,8 @@
     try {
       localStorage.setItem("icbf_planner_v1", JSON.stringify({
         days: state.days, picks: state.picks,
-        presenterMode: state.presenterMode, myName: state.myName, myTalkIds: state.myTalkIds
+        presenterMode: state.presenterMode, myName: state.myName, myTalkIds: state.myTalkIds,
+        followed: state.followed
       }));
     } catch (e) {}
   }
@@ -129,6 +137,9 @@
         state.presenterMode = s.presenterMode || null;
         state.myName = s.myName || "";
         state.myTalkIds = (s.myTalkIds || []).filter(function (id) { return DATA[id]; });
+        state.followed = (s.followed || [])
+          .map(function (f) { return { id: f.id, name: f.name, talkIds: (f.talkIds || []).filter(function (id) { return DATA[id]; }) }; })
+          .filter(function (f) { return f.talkIds.length; });
       }
     } catch (e) {}
     if (!state.days.length) state.days = ALL_DAYS.slice();
@@ -152,6 +163,44 @@
     save(); notify();
   }
   function skipSlot(slot) { var p = pick(slot); p.kept = []; p.star = []; save(); next(); }
+
+  // ---------- followed speakers ----------
+  // Following a speaker auto-keeps + auto-stars every one of their talks (retroactively,
+  // in slots you've already decided too), respecting the 3-kept cap per slot. Talks with
+  // no competing talk in their slot are already auto-included, so there's nothing to keep.
+  function addFollowed(name, talkIds) {
+    var applied = [], already = [], overflow = [];
+    talkIds.forEach(function (id) {
+      var e = byId(id); if (!e) return;
+      var slot = slotFor(e);
+      if (!slot || slot.kind !== "choice") { already.push(id); return; }
+      var p = pick(slot);
+      if (p.kept.indexOf(id) < 0) {
+        if (p.kept.length >= 3) { overflow.push(id); return; }
+        p.kept.push(id);
+      }
+      if (p.star.indexOf(id) < 0) p.star.push(id);
+      applied.push(id);
+    });
+    state.followed.push({ id: "f" + Date.now() + Math.random().toString(36).slice(2, 7), name: name, talkIds: talkIds.slice() });
+    save(); notify();
+    return { applied: applied, already: already, overflow: overflow };
+  }
+  function removeFollowed(followId) {
+    var idx = -1;
+    state.followed.forEach(function (f, i) { if (f.id === followId) idx = i; });
+    if (idx < 0) return;
+    var f = state.followed[idx];
+    f.talkIds.forEach(function (id) {
+      var e = byId(id); if (!e) return;
+      var p = state.picks[key({ day: e.day, time: e.time })];
+      if (!p) return;
+      var ki = p.kept.indexOf(id); if (ki >= 0) p.kept.splice(ki, 1);
+      var si = p.star.indexOf(id); if (si >= 0) p.star.splice(si, 1);
+    });
+    state.followed.splice(idx, 1);
+    save(); notify();
+  }
 
   // ---------- navigation ----------
   function next() { if (state.step < CHOICES.length - 1) { state.step++; state.screen = "play"; notify(); } else goReview(); }
@@ -301,11 +350,13 @@
     dayAgenda: dayAgenda, sessColor: sessColor, findMatches: findMatches, byId: byId, key: key,
     pick: pick, currentSlot: currentSlot, countChoices: countChoices, hasPicks: hasPicks,
     choiceIndexForKey: choiceIndexForKey, renderPrintArea: renderPrintArea, FIXLBL: FIXLBL,
+    isFollowedTalk: isFollowedTalk,
     // actions
     toggleKeep: toggleKeep, toggleStar: toggleStar, skipSlot: skipSlot,
     next: next, back: back, goStart: goStart, goPlay: goPlay, goReview: goReview, startOver: startOver,
     toggleDay: toggleDay, setPresenterMode: setPresenterMode, setSearching: setSearching,
     setMyName: setMyName, confirmMyTalks: confirmMyTalks,
+    addFollowed: addFollowed, removeFollowed: removeFollowed,
     // io
     downloadPDF: downloadPDF, openPDF: openPDF, printSchedule: printSchedule,
     esc: esc, flash: flash,

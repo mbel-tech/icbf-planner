@@ -28,6 +28,7 @@
     sw.querySelector("button").onclick = function () { if (window.ICBFSwitchUI) window.ICBFSwitchUI("desktop"); };
     box.appendChild(sw);
     box.appendChild(presenterBlock());
+    box.appendChild(followBlock());
     box.appendChild(el('<h3>Days you’re attending</h3>'));
     var dp = el('<div class="m-daypick"></div>');
     C.ALL_DAYS.forEach(function (d) {
@@ -120,6 +121,82 @@
     return wrap;
   }
 
+  function followBlock() {
+    var wrap = el('<div class="m-presenter"></div>');
+    wrap.appendChild(el('<h3>👥 Follow specific speakers</h3>'));
+    wrap.appendChild(el('<p class="m-muted">Search a name — their talks get kept &amp; starred wherever they '
+      + 'present, even in slots you’ve already decided. Unfollowing removes their talks from your picks too.</p>'));
+
+    var chips = el('<div class="m-chiprow"></div>');
+    function renderChips() {
+      chips.innerHTML = "";
+      C.state.followed.forEach(function (f) {
+        var chip = el('<span class="m-chip">👥 ' + esc(f.name) + ' <i>(' + f.talkIds.length + ')</i> '
+          + '<button aria-label="Unfollow">✕</button></span>');
+        chip.querySelector("button").onclick = function () { C.removeFollowed(f.id); renderChips(); };
+        chips.appendChild(chip);
+      });
+    }
+    renderChips();
+    wrap.appendChild(chips);
+
+    var input = el('<input type="text" class="m-nameinput" placeholder="Speaker name — e.g. Wood, Chris">');
+    var btn = el('<button class="m-primary m-wide">Find talks</button>');
+    wrap.appendChild(input); wrap.appendChild(btn);
+    var resultsBox = el('<div class="m-results"></div>');
+    wrap.appendChild(resultsBox);
+
+    function runSearch() {
+      var q = input.value.trim();
+      resultsBox.innerHTML = "";
+      if (!q) return;
+      var matches = C.findMatches(q);
+      if (!matches.length) {
+        resultsBox.appendChild(el('<p class="m-muted">No talks found for “' + esc(q) + '”.</p>'));
+        return;
+      }
+      resultsBox.appendChild(el('<p class="m-muted">Found ' + matches.length + ' — untick any that aren’t them:</p>'));
+      var checks = [];
+      matches.forEach(function (m) {
+        var r = el('<label class="m-matchrow"><input type="checkbox" checked><span></span></label>');
+        checks.push({ cb: r.querySelector("input"), id: m.id });
+        r.querySelector("span").innerHTML = "<b>" + esc(m.day) + " " + esc(m.time) + "</b> · " + esc(m.room)
+          + "<br>" + esc(m.title) + "<br><i>" + esc(m.presenter) + "</i>";
+        resultsBox.appendChild(r);
+      });
+      var confirm = el('<button class="m-primary m-wide">＋ Follow &amp; add their talks</button>');
+      confirm.onclick = function () {
+        var ids = checks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.id; });
+        if (!ids.length) return C.flash("Pick at least one talk first.");
+        var res = C.addFollowed(q, ids);
+        var msg = res.applied.length + " talk" + (res.applied.length === 1 ? "" : "s") + " added";
+        if (res.already.length) msg += " · " + res.already.length + " already in your schedule";
+        if (res.overflow.length) msg += " · " + res.overflow.length + " didn’t fit (3 already kept there)";
+        C.flash(msg);
+        input.value = ""; resultsBox.innerHTML = "";
+        renderChips();
+      };
+      resultsBox.appendChild(confirm);
+    }
+    btn.onclick = runSearch;
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); runSearch(); } });
+    return wrap;
+  }
+
+  // ---------------- follow sheet (reachable from play + review) ----------------
+  function openFollowSheet() {
+    var back = el('<div class="m-sheet-back"></div>');
+    var sheet = el('<div class="m-sheet"></div>');
+    sheet.appendChild(el('<div class="m-sheet-grab"></div>'));
+    sheet.appendChild(followBlock());
+    sheet.appendChild(el('<button class="m-ghost m-wide">Close</button>')).onclick = closeSheet;
+    function closeSheet() { back.classList.remove("show"); setTimeout(function () { back.remove(); }, 200); }
+    back.onclick = function (e) { if (e.target === back) closeSheet(); };
+    back.appendChild(sheet);
+    document.body.appendChild(back);
+    requestAnimationFrame(function () { back.classList.add("show"); });
+  }
+
   // ---------------- play ----------------
   function renderPlay() {
     if (!C.countChoices()) return C.goReview();
@@ -131,8 +208,13 @@
     // top progress
     var top = el('<div class="m-top"></div>');
     top.appendChild(el('<div class="m-progbar"><i style="width:' + ((step + 1) / n * 100) + '%"></i></div>'));
-    top.appendChild(el('<div class="m-topmeta"><span>Slot ' + (step + 1) + ' of ' + n + '</span>'
-      + '<span class="m-daytag">' + esc(slot.day) + '</span></div>'));
+    var topmeta = el('<div class="m-topmeta"></div>');
+    topmeta.appendChild(el('<span>Slot ' + (step + 1) + ' of ' + n + '</span>'));
+    var fbtn = el('<button class="m-followbtn">👥' + (C.state.followed.length ? " " + C.state.followed.length : "") + '</button>');
+    fbtn.onclick = openFollowSheet;
+    topmeta.appendChild(fbtn);
+    topmeta.appendChild(el('<span class="m-daytag">' + esc(slot.day) + '</span>'));
+    top.appendChild(topmeta);
     app.appendChild(top);
 
     var scroll = el('<div class="m-scroll" id="m-scroll"></div>');
@@ -143,11 +225,12 @@
     scroll.appendChild(el('<div class="m-when">' + esc(slot.time) + ' — choose your talk(s)</div>'));
 
     slot.talks.forEach(function (tk) {
-      var kept = p.kept.indexOf(tk.id) >= 0, star = p.star.indexOf(tk.id) >= 0;
+      var kept = p.kept.indexOf(tk.id) >= 0, star = p.star.indexOf(tk.id) >= 0, followed = C.isFollowedTalk(tk.id);
       var c = C.sessColor(tk.session);
       var card = el('<div class="m-card ' + (kept ? "kept" : "") + (star ? " star" : "") + '" style="--bar:' + c.bar + '"></div>');
       card.appendChild(el('<div class="m-cardtop"><span class="m-room">' + esc(tk.room) + (tk.seats ? ' · ' + tk.seats + ' seats' : "") + '</span>'
-        + '<span class="m-tag" style="background:' + c.bg + ';color:' + c.fg + '">' + esc(tk.session || "General") + '</span></div>'));
+        + '<span class="m-tagrow">' + (followed ? '<span class="m-followtag">👥</span>' : "")
+        + '<span class="m-tag" style="background:' + c.bg + ';color:' + c.fg + '">' + esc(tk.session || "General") + '</span></span></div>'));
       card.appendChild(el('<div class="m-title">' + esc(tk.title) + '</div>'));
       card.appendChild(el('<div class="m-pres">' + esc(tk.presenter || "") + '</div>'));
       var acts = el('<div class="m-acts"></div>');
@@ -217,7 +300,7 @@
     if (it.type === "fixed")
       return el('<div class="m-arow fix"><span class="t">' + esc(it.slot.time) + '</span><span class="c">' + C.FIXLBL[it.item.type] + '</span></div>');
     var inner = it.kept.map(function (tk) {
-      var s = it.star.indexOf(tk.id) >= 0 ? "★ " : "";
+      var s = (it.star.indexOf(tk.id) >= 0 ? "★ " : "") + (C.isFollowedTalk(tk.id) ? "👥 " : "");
       return '<div class="opt">' + s + esc(tk.room) + ' — ' + esc(tk.title) + '<br><i>' + esc(tk.presenter || "") + '</i></div>';
     }).join("");
     return el('<div class="m-arow choice"><span class="t">' + esc(it.slot.time) + '</span>'
@@ -230,6 +313,9 @@
     var top = el('<div class="m-rvtop"></div>');
     top.appendChild(el('<button class="m-navbtn">◀</button>')).onclick = function () { C.goPlay(0); };
     top.appendChild(el('<h2>My Schedule</h2>'));
+    var fbtn = el('<button class="m-followbtn">👥' + (C.state.followed.length ? " " + C.state.followed.length : "") + '</button>');
+    fbtn.onclick = openFollowSheet;
+    top.appendChild(fbtn);
     app.appendChild(top);
 
     var ag = C.assemble();

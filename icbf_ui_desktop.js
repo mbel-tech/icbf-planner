@@ -23,6 +23,7 @@
       + 'For every slot you may <b>keep up to 3</b> talks (decide later which to attend) and <b>★ star</b> the must-not-miss ones. '
       + 'Breaks, lunches, posters and plenaries are added automatically.</p>'));
     box.appendChild(presenterBlock());
+    box.appendChild(followBlock());
     box.appendChild(el('<h3>Which days are you attending?</h3>'));
     var dp = el('<div class="daypick"></div>');
     C.ALL_DAYS.forEach(function (d) {
@@ -128,6 +129,105 @@
     return wrap;
   }
 
+  function followBlock() {
+    var wrap = el('<div class="presenter-block"></div>');
+    wrap.appendChild(el('<h3>👥 Follow specific speakers</h3>'));
+    wrap.appendChild(el('<p class="muted">Search a name — their talks get kept &amp; starred wherever they '
+      + 'present, even in slots you’ve already decided. Unfollowing removes their talks from your picks too.</p>'));
+
+    var chips = el('<div class="chiprow"></div>');
+    function renderChips() {
+      chips.innerHTML = "";
+      C.state.followed.forEach(function (f) {
+        var chip = el('<span class="chip">👥 ' + esc(f.name) + ' <i>(' + f.talkIds.length + ')</i> '
+          + '<button aria-label="Unfollow">✕</button></span>');
+        chip.querySelector("button").onclick = function () { C.removeFollowed(f.id); renderChips(); };
+        chips.appendChild(chip);
+      });
+    }
+    renderChips();
+    wrap.appendChild(chips);
+
+    var searchRow = el('<div class="searchrow"></div>');
+    var input = el('<input type="text" class="nameinput" placeholder="Speaker name — e.g. Wood, Chris">');
+    var btn = el('<button class="primary">Find talks</button>');
+    searchRow.appendChild(input); searchRow.appendChild(btn);
+    wrap.appendChild(searchRow);
+    var resultsBox = el('<div class="searchresults"></div>');
+    wrap.appendChild(resultsBox);
+
+    function runSearch() {
+      var q = input.value.trim();
+      resultsBox.innerHTML = "";
+      if (!q) return;
+      var matches = C.findMatches(q);
+      if (!matches.length) {
+        resultsBox.appendChild(el('<p class="muted">No talks found for “' + esc(q) + '”.</p>'));
+        return;
+      }
+      resultsBox.appendChild(el('<p class="muted">Found ' + matches.length + ' match'
+        + (matches.length > 1 ? "es" : "") + ' — untick any that aren’t them:</p>'));
+      var list = el('<div class="matchlist"></div>');
+      var checks = [];
+      matches.forEach(function (m) {
+        var r = el('<label class="matchrow"><input type="checkbox" checked><span></span></label>');
+        checks.push({ cb: r.querySelector("input"), id: m.id });
+        r.querySelector("span").innerHTML = "<b>" + esc(m.day) + " " + esc(m.time) + "</b> · " + esc(m.room)
+          + "<br>" + esc(m.title) + "<br><i>" + esc(m.presenter) + "</i>";
+        list.appendChild(r);
+      });
+      resultsBox.appendChild(list);
+      var confirm = el('<button class="primary">＋ Follow &amp; add their talks</button>');
+      confirm.onclick = function () {
+        var ids = checks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.id; });
+        if (!ids.length) return C.flash("Pick at least one talk first.");
+        var res = C.addFollowed(q, ids);
+        var msg = res.applied.length + " talk" + (res.applied.length === 1 ? "" : "s") + " added";
+        if (res.already.length) msg += " · " + res.already.length + " already in your schedule";
+        if (res.overflow.length) msg += " · " + res.overflow.length + " didn’t fit (3 already kept there)";
+        C.flash(msg);
+        input.value = ""; resultsBox.innerHTML = "";
+        renderChips();
+      };
+      resultsBox.appendChild(confirm);
+    }
+    btn.onclick = runSearch;
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") runSearch(); });
+    return wrap;
+  }
+
+  // ---------------- follow modal (reachable from play + review) ----------------
+  var followModalOpen = false, followModalRoot = null;
+  function toggleFollowModal(v) {
+    followModalOpen = (v === undefined) ? !followModalOpen : !!v;
+    renderFollowModal();
+  }
+  function renderFollowModal() {
+    if (!followModalRoot) {
+      followModalRoot = document.createElement("div");
+      followModalRoot.id = "followModalRoot";
+      document.body.appendChild(followModalRoot);
+    }
+    followModalRoot.innerHTML = "";
+    if (!followModalOpen) return;
+    var back = el('<div class="modal-back"></div>');
+    back.onclick = function (e) { if (e.target === back) toggleFollowModal(false); };
+    var panel = el('<div class="modal-panel"></div>');
+    var closeBtn = el('<button class="modal-close" aria-label="Close">✕</button>');
+    closeBtn.onclick = function () { toggleFollowModal(false); };
+    panel.appendChild(closeBtn);
+    panel.appendChild(followBlock());
+    back.appendChild(panel);
+    followModalRoot.appendChild(back);
+    requestAnimationFrame(function () { back.classList.add("show"); });
+  }
+  function followBtn() {
+    var n = C.state.followed.length;
+    var b = el('<button class="ghost">👥 Speakers' + (n ? ' (' + n + ')' : '') + '</button>');
+    b.onclick = function () { toggleFollowModal(true); };
+    return b;
+  }
+
   // ---------------- play ----------------
   function renderPlay() {
     if (!C.countChoices()) return C.goReview();
@@ -140,6 +240,7 @@
     bar.appendChild(el('<button class="ghost">◀ Back</button>')).onclick = C.back;
     bar.appendChild(el('<div class="prog"><div class="progbar"><i style="width:' + ((step + 1) / n * 100) + '%"></i></div>'
       + '<span>Slot ' + (step + 1) + ' of ' + n + '</span></div>'));
+    bar.appendChild(followBtn());
     bar.appendChild(el('<button class="primary">Finish & review ✓</button>')).onclick = C.goReview;
     app.appendChild(bar);
 
@@ -154,11 +255,12 @@
 
     var grid = el('<div class="grid"></div>');
     slot.talks.forEach(function (tk) {
-      var kept = p.kept.indexOf(tk.id) >= 0, star = p.star.indexOf(tk.id) >= 0;
+      var kept = p.kept.indexOf(tk.id) >= 0, star = p.star.indexOf(tk.id) >= 0, followed = C.isFollowedTalk(tk.id);
       var c = C.sessColor(tk.session);
       var card = el('<div class="card ' + (kept ? "kept" : "") + (star ? " star" : "") + '" style="--bar:' + c.bar + '"></div>');
       card.appendChild(el('<div class="cardtop"><span class="room">' + esc(tk.room) + (tk.seats ? ' · ' + tk.seats + ' seats' : "") + '</span>'
-        + '<span class="tag" style="background:' + c.bg + ';color:' + c.fg + '">' + esc(tk.session || "General") + '</span></div>'));
+        + '<span class="tagrow">' + (followed ? '<span class="followtag">👥</span>' : "")
+        + '<span class="tag" style="background:' + c.bg + ';color:' + c.fg + '">' + esc(tk.session || "General") + '</span></span></div>'));
       card.appendChild(el('<div class="title">' + esc(tk.title) + '</div>'));
       card.appendChild(el('<div class="pres">' + esc(tk.presenter || "") + '</div>'));
       var acts = el('<div class="acts"></div>');
@@ -213,7 +315,7 @@
     }
     var starset = it.star;
     var inner = it.kept.map(function (tk) {
-      var s = starset.indexOf(tk.id) >= 0 ? "★ " : "";
+      var s = (starset.indexOf(tk.id) >= 0 ? "★ " : "") + (C.isFollowedTalk(tk.id) ? "👥 " : "");
       return '<div class="opt">' + s + esc(tk.room) + ' — ' + esc(tk.title) + '<br><i>' + esc(tk.presenter || "") + '</i></div>';
     }).join("");
     var many = it.kept.length > 1 ? ' many' : '';
@@ -228,6 +330,7 @@
     head.appendChild(el('<button class="ghost">◀ Keep editing</button>')).onclick = function () { C.goPlay(0); };
     head.appendChild(el('<h2>My ICBF 2026 Schedule</h2>'));
     var acts = el('<div class="rvacts"></div>');
+    acts.appendChild(followBtn());
     acts.appendChild(el('<button class="primary big">⬇ Download PDF</button>')).onclick = C.downloadPDF;
     acts.appendChild(el('<button class="ghost">🖨 Print</button>')).onclick = C.printSchedule;
     var rs = el('<button class="link">↺ Start over</button>');
